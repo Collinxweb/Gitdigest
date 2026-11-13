@@ -146,3 +146,133 @@ class PipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeResp:
+    def __init__(self, status=200, payload=None, chunks=None, headers=None):
+        self.status_code, self._payload = status, payload
+        self._chunks, self.headers = chunks or [], headers or {}
+
+    def json(self):
+        return self._payload
+
+    def iter_content(self, n):
+        return iter(self._chunks)
+
+    def close(self):
+        pass
+
+
+class GithubApiTests(unittest.TestCase):
+    def setUp(self):
+        self.orig = g.requests.get
+
+    def tearDown(self):
+        g.requests.get = self.orig
+
+    def test_tree_filters_and_picks_files(self):
+        def fake_get(url, **kw):
+            if url.endswith("/repos/o/r"):
+                return FakeResp(payload={"default_branch": "main", "size": 10, "private": False})
+            return FakeResp(payload={"sha": "abc", "tree": [
+                {"path": "README.md", "type": "blob", "mode": "100644", "size": 10},
+                {"path": "src", "type": "tree", "mode": "040000"},
+                {"path": "src/app.py", "type": "blob", "mode": "100644", "size": 50},
+                {"path": "link.txt", "type": "blob", "mode": "120000", "size": 5},
+                {"path": "vendor/x.js", "type": "blob", "mode": "100644", "size": 5},
+                {"path": "package-lock.json", "type": "blob", "mode": "100644", "size": 5},
+                {"path": "huge.txt", "type": "blob", "mode": "100644", "size": g.MAX_FILE_BYTES + 1},
+                {"path": "bad;name$.py", "type": "blob", "mode": "100644", "size": 5},
+            ]})
+        g.requests.get = fake_get
+        t = g.github_tree("o", "r")
+        self.assertEqual((t["branch"], t["tree_sha"]), ("main", "abc"))
+        self.assertEqual(t["files"], ["README.md", "src/app.py"])
+
+    def test_private_missing_and_oversized_repos_are_refused(self):
+        g.requests.get = lambda url, **kw: FakeResp(404)
+        with self.assertRaises(g.RepoError):
+            g.github_tree("o", "r")
+        g.requests.get = lambda url, **kw: FakeResp(payload={"private": True})
+        with self.assertRaises(g.RepoError):
+            g.github_tree("o", "r")
+        g.requests.get = lambda url, **kw: FakeResp(payload={"size": g.MAX_REPO_KB + 1})
+        with self.assertRaises(g.RepoError):
+            g.github_tree("o", "r")
+
+    def test_github_api_outage_gives_a_clear_error(self):
+        g.requests.get = lambda url, **kw: FakeResp(403)
+        with self.assertRaises(g.RepoError) as cm:
+            g.github_tree("o", "r")
+        self.assertIn("GITHUB_TOKEN", str(cm.exception))
+
+
+class FetchRawTests(unittest.TestCase):
+    def setUp(self):
+        self.orig = g.requests.get
+
+    def tearDown(self):
+        g.requests.get = self.orig
+
+    def test_rejects_bad_paths_and_branches_before_any_request(self):
+        g.requests.get = lambda *a, **k: self.fail("should not fetch")
+        for path in ["../etc/passwd", "/abs", "a/../b", "a;b", "x" * 400, ""]:
+            with self.assertRaises(g.InputError, msg=path):
+                g.fetch_raw("o", "r", "main", path)
+        for branch in ["../x", "a b", "main;x", ""]:
+            with self.assertRaises(g.InputError, msg=branch):
+                g.fetch_raw("o", "r", branch, "a.py")
+
+    def test_builds_a_fixed_host_url_and_decodes(self):
+        seen = {}
+
+        def fake(url, **kw):
+            seen["url"] = url
+            return FakeResp(chunks=[b"hello ", b"world\n"])
+        g.requests.get = fake
+        self.assertEqual(g.fetch_raw("o", "r", "main", "src/my file.py"), "hello world\n")
+        self.assertEqual(seen["url"], "https://raw.githubusercontent.com/o/r/main/src/my%20file.py")
+
+    def test_size_binary_and_status_limits(self):
+        g.requests.get = lambda url, **kw: FakeResp(chunks=[b"x" * (g.MAX_FILE_BYTES + 1)])
+        with self.assertRaises(g.RepoError):
+            g.fetch_raw("o", "r", "main", "a.txt")
+        g.requests.get = lambda url, **kw: FakeResp(chunks=[b"ab\0cd"])
+        with self.assertRaises(g.RepoError):
+            g.fetch_raw("o", "r", "main", "a.bin")
+        g.requests.get = lambda url, **kw: FakeResp(404)
+        with self.assertRaises(g.RepoError):
+            g.fetch_raw("o", "r", "main", "a.py")
+
+
+class ModelErrorTests(unittest.TestCase):
+    def test_404_names_the_model_and_the_setting_to_change(self):
+        orig = g.requests.post
+        g.requests.post = lambda *a, **k: FakeResp(404)
+        try:
+            for provider, env in [("gemini", "GEMINI_MODEL"), ("groq", "GROQ_MODEL")]:
+                with self.assertRaises(g.LLMError) as cm:
+                    g.complete(provider, "hi", "key")
+                msg = str(cm.exception)
+                self.assertIn(g.MODELS[provider], msg)
+                self.assertIn(env, msg)
+        finally:
+            g.requests.post = orig
+
+    def test_default_models_are_not_the_retired_ones(self):
+        self.assertNotIn("2.5", g.MODELS["gemini"])
+        self.assertNotEqual(g.MODELS["groq"], "llama-3.3-70b-versatile")
+
+
+class RetryBudgetTests(unittest.TestCase):
+    def test_long_waits_surface_as_rate_limited_instead_of_sleeping(self):
+        orig_post, orig_budget, orig_sleep = g.requests.post, g.RETRY_BUDGET, g.time.sleep
+        g.RETRY_BUDGET = 10
+        g.time.sleep = lambda s: self.fail("must not sleep past the budget")
+        g.requests.post = lambda *a, **k: FakeResp(429, headers={"Retry-After": "30"})
+        try:
+            with self.assertRaises(g.RateLimited) as cm:
+                g.complete("gemini", "hi", "key")
+            self.assertEqual(cm.exception.retry_after, 30)
+        finally:
+            g.requests.post, g.RETRY_BUDGET, g.time.sleep = orig_post, orig_budget, orig_sleep

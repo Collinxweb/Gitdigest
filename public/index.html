@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d18">
+<title>GitDigest</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d0d18; --surface: #161626; --surface2: #1d1d31; --line: #2a2a42;
+  --text: #f1f0fa; --muted: #9b9bb8; --accent: #7c5cff; --accent2: #a58bff;
+  --ok: #34c77b; --okbg: #13362a; --warn: #f0b429; --warnbg: #3a2c0c; --err: #ff7a7a; --errbg: #3a1717;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f5f5fb; --surface: #ffffff; --surface2: #f0f0f8; --line: #e2e2ee;
+    --text: #17172a; --muted: #62627a; --accent: #6a4cf0; --accent2: #5a3ee0;
+    --ok: #1f8f58; --okbg: #dff5ea; --warn: #9a6400; --warnbg: #fdf1d6; --err: #b3261e; --errbg: #fde7e5;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+.app { max-width: 560px; margin: 0 auto; min-height: 100%; }
+.view { display: none; padding: 20px 18px 100px; }
+.view.active { display: block; }
+h1 { font-size: 1.7rem; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.02em; }
+h2 { font-size: 1.05rem; margin: 26px 0 12px; }
+p { margin: 0 0 12px; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.accent { color: var(--accent2); }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; margin-bottom: 24px; }
+.logo { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); display: grid; place-items: center; color: #fff; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.pill { display: inline-block; font-size: 0.8rem; padding: 5px 11px; border-radius: 999px; background: var(--surface2); border: 1px solid var(--line); color: var(--muted); margin-bottom: 16px; }
+.btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; margin-bottom: 10px; }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.row { width: auto; padding: 10px 14px; margin: 0; font-size: 0.9rem; }
+.checks { list-style: none; padding: 0; margin: 18px 0; }
+.checks li { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.checks li::before { content: "\2713"; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 0.8rem; display: grid; place-items: center; flex-shrink: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 15px; margin-bottom: 10px; }
+.card.click { cursor: pointer; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.repo { font-weight: 650; word-break: break-all; }
+.meta { font-size: 0.82rem; color: var(--muted); margin-top: 2px; }
+.badge { font-size: 0.75rem; font-weight: 600; padding: 4px 9px; border-radius: 999px; white-space: nowrap; }
+.badge.ok { background: var(--okbg); color: var(--ok); }
+.badge.warn { background: var(--warnbg); color: var(--warn); }
+.field { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px 12px; margin-bottom: 12px; }
+.field input, .field textarea, .field select { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; color: var(--text); font: inherit; padding: 11px 0; }
+.field textarea { resize: vertical; min-height: 70px; }
+.field select option { color: #000; }
+.field input::placeholder, .field textarea::placeholder { color: var(--muted); }
+.label { font-size: 0.82rem; color: var(--muted); margin: 14px 0 6px; display: block; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: inherit; font-size: 0.88rem; padding: 8px 13px; border-radius: 999px; cursor: pointer; background: var(--surface2); border: 1px solid var(--line); color: var(--muted); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.notice { font-size: 0.85rem; border-radius: 10px; padding: 10px 12px; margin: 12px 0; }
+.notice.warn { color: var(--warn); background: var(--warnbg); }
+.notice.err { color: var(--err); background: var(--errbg); }
+.steps { display: grid; gap: 10px; }
+.step { display: flex; gap: 12px; align-items: center; }
+.step i { font-style: normal; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 0.85rem; flex-shrink: 0; }
+.bar { height: 8px; border-radius: 999px; background: var(--surface2); overflow: hidden; margin: 16px 0 10px; }
+.bar > div { height: 100%; width: 0; background: var(--accent); transition: width 0.4s; }
+.report h1, .report h2, .report h3 { margin: 20px 0 8px; }
+.report h1 { font-size: 1.3rem; } .report h2 { font-size: 1.1rem; } .report h3 { font-size: 1rem; }
+.report ul, .report ol { padding-left: 20px; margin: 0 0 12px; }
+.report li { margin-bottom: 8px; }
+.report code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; }
+.report pre { background: var(--surface2); padding: 12px; border-radius: 8px; overflow-x: auto; }
+.report pre code { background: none; padding: 0; }
+.report a.cite { font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; color: var(--accent2); word-break: break-all; }
+.unverified { font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; color: var(--warn); background: var(--warnbg); padding: 1px 6px; border-radius: 4px; word-break: break-all; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+.tabbar { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 560px; display: grid; grid-template-columns: repeat(3, 1fr); background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.tabbar.hidden { display: none; }
+.tab { background: none; border: 0; color: var(--muted); font: inherit; font-size: 0.75rem; padding: 10px 4px 12px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.tab .ic { font-size: 1.15rem; line-height: 1; }
+.tab.on { color: var(--accent2); font-weight: 600; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <section class="view" id="welcome">
+    <div class="brand"><div class="logo">&lt;/&gt;</div> GitDigest</div>
+    <span class="pill">&#9889; From code to clarity</span>
+    <h1>Understand any GitHub repo <span class="accent">with confidence.</span></h1>
+    <p class="muted">GitDigest turns a public repository into a concise summary where every claim links to the exact file and line range it came from. Anything that doesn't match the real code is marked unverified.</p>
+    <ul class="checks">
+      <li>Cited and verifiable</li>
+      <li>Security review, due diligence, onboarding, or your own focus</li>
+      <li>Public repositories only. Your summaries stay in your browser.</li>
+    </ul>
+    <button class="btn primary" id="startBtn">Get started</button>
+  </section>
+
+  <section class="view" id="home">
+    <div class="brand"><div class="logo">&lt;/&gt;</div> GitDigest</div>
+    <h1>Turn any repo into a <span class="accent">cited summary.</span></h1>
+    <p class="muted">Paste a public GitHub repo and pick why you're reading it.</p>
+
+    <div class="field">
+      <input id="repoUrl" type="url" inputmode="url" autocapitalize="none" autocorrect="off" placeholder="github.com/owner/repo" aria-label="GitHub repository URL">
+    </div>
+
+    <span class="label">Purpose</span>
+    <div class="chips" id="purposes">
+      <button class="chip on" data-p="security">Security</button>
+      <button class="chip" data-p="due-diligence">Due diligence</button>
+      <button class="chip" data-p="onboarding">Onboarding</button>
+      <button class="chip" data-p="custom">Custom</button>
+    </div>
+
+    <div id="customBox" hidden>
+      <span class="label">What do you need? <span id="focusCount">0/300</span></span>
+      <div class="field"><textarea id="focus" maxlength="300" placeholder="For example: how user funds move through this code"></textarea></div>
+    </div>
+
+    <div id="providerBox" hidden>
+      <span class="label">Model</span>
+      <div class="field"><select id="provider" aria-label="Model provider"></select></div>
+    </div>
+
+    <div id="codeBox" hidden>
+      <span class="label">Access code</span>
+      <div class="field"><input id="code" type="password" autocomplete="off" placeholder="Enter your access code"></div>
+    </div>
+
+    <div class="notice err" id="homeError" hidden></div>
+    <button class="btn primary" id="analyzeBtn">Analyze repo</button>
+
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step"><i>1</i> Paste a public repo and choose a purpose</div>
+      <div class="step"><i>2</i> Get a summary with file and line citations</div>
+      <div class="step"><i>3</i> Open any citation to see the source</div>
+    </div>
+  </section>
+
+  <section class="view" id="progress">
+    <div class="brand"><div class="logo">&lt;/&gt;</div> GitDigest</div>
+    <h1>Analyzing</h1>
+    <p class="muted" id="progressRepo"></p>
+    <div class="bar"><div id="barFill"></div></div>
+    <p id="progressMsg" class="small">Starting</p>
+    <p class="muted small">This can take a few minutes. Keep this page open.</p>
+    <button class="btn" id="cancelBtn">Cancel</button>
+  </section>
+
+  <section class="view" id="result">
+    <div class="brand"><div class="logo">&lt;/&gt;</div> GitDigest</div>
+    <div class="card-head"><div class="repo" id="resRepo"></div><span class="badge" id="resBadge"></span></div>
+    <p class="meta" id="resMeta"></p>
+    <div class="actions">
+      <button class="btn row" id="copyBtn">Copy markdown</button>
+      <button class="btn row" id="downloadBtn">Download .md</button>
+      <button class="btn row" id="newBtn">New analysis</button>
+    </div>
+    <div class="report" id="resBody"></div>
+  </section>
+
+  <section class="view" id="history">
+    <h1>My summaries</h1>
+    <p class="muted small">Saved in this browser only.</p>
+    <div id="historyList"></div>
+  </section>
+
+  <section class="view" id="about">
+    <h1>About</h1>
+    <p class="muted">GitDigest reads the key files of a public repository, summarizes them with a language model, and checks every citation against the real code. A citation that points to a file or line range that doesn't exist is marked unverified.</p>
+    <h2>Limits</h2>
+    <ul class="small muted">
+      <li>Public GitHub repositories only.</li>
+      <li>Up to 25 files per run, README and manifests first.</li>
+      <li>Summaries only. It does not reproduce the code.</li>
+      <li id="limitLine"></li>
+    </ul>
+    <p class="small muted">Summaries are written by a language model and can still be wrong. Open the citations before you rely on a claim.</p>
+  </section>
+
+  <nav class="tabbar hidden" id="tabbar">
+    <button class="tab" data-go="home"><span class="ic">&#8962;</span>Analyze</button>
+    <button class="tab" data-go="history"><span class="ic">&#9636;</span>Summaries</button>
+    <button class="tab" data-go="about"><span class="ic">&#9432;</span>About</button>
+  </nav>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const TABBED = ["home", "history", "about"];
+const LABELS = { "security": "Security review", "due-diligence": "Due diligence", "onboarding": "Onboarding", "custom": "Custom focus" };
+const state = { config: { providers: [], needs_code: false, gaps: {} }, purpose: "security", current: null, run: null };
+
+/* ---------- storage (guarded: it can be empty or blocked) ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+};
+
+/* ---------- navigation ---------- */
+function show(name) {
+  if (!document.getElementById(name)) name = "welcome";
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === name));
+  $("#tabbar").classList.toggle("hidden", !TABBED.includes(name));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.go === name));
+  if (name === "history") renderHistory();
+  window.scrollTo(0, 0);
+}
+function go(name) { location.hash = name; }
+window.addEventListener("hashchange", () => show(location.hash.slice(1)));
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-go]");
+  if (el) go(el.dataset.go);
+});
+
+/* ---------- markdown rendering (escape first, then format) ---------- */
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+const CITE = /([\w][\w./\-]*\.\w+):(\d+)(?:-(\d+))?/g;
+
+function inline(raw, ctx) {
+  raw = raw.replace(/`([\w][\w./\-]*\.\w+:\d+(?:-\d+)?)`/g, "$1");
+  return raw.split(/(\[unverified: [^\]]+\])/).map(part => {
+    if (/^\[unverified: /.test(part)) return '<span class="unverified">' + esc(part) + "</span>";
+    let s = esc(part);
+    s = s.replace(CITE, (m, path, a, b) => {
+      if (!ctx.paths.has(path)) return m;
+      const anchor = "#L" + a + (b ? "-L" + b : "");
+      const href = "https://github.com/" + ctx.repo + "/blob/" + encodeURIComponent(ctx.branch) + "/" + path + anchor;
+      return '<a class="cite" target="_blank" rel="noopener noreferrer" href="' + href + '">' + m + "</a>";
+    });
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    return s;
+  }).join("");
+}
+
+function renderMarkdown(md, ctx) {
+  const out = [];
+  let list = null, para = [], fence = null;
+  const flushPara = () => { if (para.length) { out.push("<p>" + para.join(" ") + "</p>"); para = []; } };
+  const flushList = () => { if (list) { out.push("</" + list + ">"); list = null; } };
+  for (const line of md.split("\n")) {
+    if (/^```/.test(line)) {
+      if (fence === null) { flushPara(); flushList(); fence = []; }
+      else { out.push("<pre><code>" + esc(fence.join("\n")) + "</code></pre>"); fence = null; }
+      continue;
+    }
+    if (fence !== null) { fence.push(line); continue; }
+    let m;
+    if ((m = line.match(/^(#{1,4})\s+(.*)$/))) {
+      flushPara(); flushList();
+      const n = Math.min(m[1].length + 1, 4);
+      out.push("<h" + n + ">" + inline(m[2], ctx) + "</h" + n + ">");
+    } else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) {
+      flushPara();
+      if (list !== "ul") { flushList(); out.push("<ul>"); list = "ul"; }
+      out.push("<li>" + inline(m[1], ctx) + "</li>");
+    } else if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) {
+      flushPara();
+      if (list !== "ol") { flushList(); out.push("<ol>"); list = "ol"; }
+      out.push("<li>" + inline(m[1], ctx) + "</li>");
+    } else if (!line.trim()) {
+      flushPara(); flushList();
+    } else {
+      flushList(); para.push(inline(line.trim(), ctx));
+    }
+  }
+  if (fence !== null) out.push("<pre><code>" + esc(fence.join("\n")) + "</code></pre>");
+  flushPara(); flushList();
+  return out.join("\n");
+}
+
+/* ---------- results ---------- */
+function statusOf(r) {
+  if (r.citations_ok > 0 && r.citations_bad === 0) return { text: "Verified", cls: "ok" };
+  if (r.citations_ok > 0) return { text: "Partly verified", cls: "warn" };
+  return { text: "No citations", cls: "warn" };
+}
+
+function showResult(entry) {
+  state.current = entry;
+  const st = statusOf(entry);
+  $("#resRepo").textContent = entry.repo;
+  const badge = $("#resBadge");
+  badge.textContent = st.text; badge.className = "badge " + st.cls;
+  $("#resMeta").textContent = LABELS[entry.purpose] + " · " + entry.files.length + " files · " +
+    entry.citations_ok + " citations verified · " + entry.citations_bad + " failed";
+  $("#resBody").innerHTML = renderMarkdown(entry.report, { repo: entry.repo, branch: entry.branch || "HEAD", paths: new Set(entry.linkable || []) });
+  go("result");
+}
+
+function fileName(entry) { return "gitdigest-" + entry.repo.replace("/", "-") + "-" + entry.purpose + ".md"; }
+
+$("#copyBtn").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(state.current.report); $("#copyBtn").textContent = "Copied"; }
+  catch (e) { $("#copyBtn").textContent = "Copy failed"; }
+  setTimeout(() => { $("#copyBtn").textContent = "Copy markdown"; }, 1800);
+});
+$("#downloadBtn").addEventListener("click", () => {
+  const blob = new Blob([state.current.report], { type: "text/markdown" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = fileName(state.current);
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$("#newBtn").addEventListener("click", () => go("home"));
+
+/* ---------- history ---------- */
+function saveHistory(entry) {
+  const list = store.get("gitdigest.history", []);
+  list.unshift(entry);
+  store.set("gitdigest.history", list.slice(0, 20));
+}
+function ago(ts) {
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return m + " min ago";
+  const h = Math.round(m / 60);
+  return h < 24 ? h + " hr ago" : Math.round(h / 24) + " days ago";
+}
+function renderHistory() {
+  const list = store.get("gitdigest.history", []);
+  const box = $("#historyList");
+  box.textContent = "";
+  if (!list.length) { box.innerHTML = '<p class="muted">No summaries yet. Run an analysis and it will appear here.</p>'; return; }
+  list.forEach(entry => {
+    const st = statusOf(entry);
+    const card = document.createElement("div");
+    card.className = "card click";
+    const head = document.createElement("div"); head.className = "card-head";
+    const left = document.createElement("div");
+    const repo = document.createElement("div"); repo.className = "repo"; repo.textContent = entry.repo;
+    const meta = document.createElement("div"); meta.className = "meta"; meta.textContent = LABELS[entry.purpose] + " · " + ago(entry.when);
+    left.append(repo, meta);
+    const badge = document.createElement("span"); badge.className = "badge " + st.cls; badge.textContent = st.text;
+    head.append(left, badge); card.append(head);
+    card.addEventListener("click", () => showResult(entry));
+    box.append(card);
+  });
+}
+
+/* ---------- analyze ---------- */
+function homeError(msg) {
+  const el = $("#homeError");
+  el.textContent = msg; el.hidden = !msg;
+}
+
+class Cancelled extends Error {}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function waitFor(ms, run) {
+  for (let t = 0; t < ms; t += 250) {
+    if (run.cancelled) throw new Cancelled();
+    await sleep(250);
+  }
+  if (run.cancelled) throw new Cancelled();
+}
+
+async function api(path, body) {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || "Request failed (" + res.status + ")");
+    err.status = res.status; err.retryAfter = data.retry_after; err.stale = !!data.stale;
+    throw err;
+  }
+  return data;
+}
+
+// The provider's own rate limit is expected on free tiers: wait and retry a few times.
+async function apiRetry(path, body, run) {
+  for (let attempt = 0; ; attempt++) {
+    if (run.cancelled) throw new Cancelled();
+    try { return await api(path, body); }
+    catch (e) {
+      if (e.status === 429 && e.retryAfter && attempt < 3) {
+        setProgress("Waiting for the model's rate limit", run.done, run.total);
+        await waitFor(Math.max(e.retryAfter, 5) * 1000, run);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+function setProgress(msg, done, total) {
+  $("#progressMsg").textContent = msg;
+  $("#barFill").style.width = Math.max(4, Math.round(100 * done / total)) + "%";
+}
+
+/* File summaries don't depend on the purpose, so keep them per repo version and reuse them. */
+function cacheLoad() { return store.get("gitdigest.filecache", {}); }
+function cacheSave(cache) {
+  const keys = Object.keys(cache).sort((a, b) => cache[b].t - cache[a].t).slice(0, 5);
+  const trimmed = {};
+  keys.forEach(k => { trimmed[k] = cache[k]; });
+  store.set("gitdigest.filecache", trimmed);
+}
+
+async function startAnalysis() {
+  homeError("");
+  const url = $("#repoUrl").value.trim();
+  if (!url) { homeError("Enter a public GitHub repo URL."); return; }
+  if (!state.config.providers.length) { homeError("No model provider is configured on this server yet."); return; }
+
+  const provider = $("#provider").value || state.config.providers[0];
+  const common = { url, provider, code: $("#code").value, purpose: state.purpose, focus: $("#focus").value };
+  const gap = (state.config.gaps && state.config.gaps[provider]) || 4;
+  const run = { cancelled: false, done: 0, total: 1 };
+  state.run = run;
+  $("#analyzeBtn").disabled = true;
+  $("#progressRepo").textContent = url.replace(/^https?:\/\//, "");
+  setProgress("Reading the repository", 0, 1);
+  go("progress");
+
+  let cacheKey = null;
+  try {
+    const plan = await apiRetry("/api/plan", common, run);
+    if (state.config.needs_code) store.set("gitdigest.code", common.code);
+    cacheKey = plan.repo + "|" + plan.tree_sha + "|" + provider;
+    const cache = cacheLoad();
+    const bucket = (cache[cacheKey] && cache[cacheKey].items) || {};
+    const total = plan.files.length + 1;
+    run.total = total;
+    const items = [];
+    const skipped = [];
+
+    for (let i = 0; i < plan.files.length; i++) {
+      if (run.cancelled) throw new Cancelled();
+      const path = plan.files[i];
+      run.done = i;
+      setProgress("Reading " + path, i, total);
+      let item = bucket[path];
+      if (!item) {
+        try {
+          item = await apiRetry("/api/summarize", Object.assign({}, common, { branch: plan.branch, path }), run);
+        } catch (e) {
+          if (e.status === 422) { skipped.push(path); continue; }  // unreadable file: skip it, keep going
+          throw e;
+        }
+        bucket[path] = item;
+        cache[cacheKey] = { t: Date.now(), items: bucket };
+        cacheSave(cache);
+        await waitFor(gap * 1000, run);
+      }
+      items.push(item);
+    }
+    if (!items.length) throw new Error("None of this repository's files could be read.");
+
+    run.done = total - 1;
+    setProgress("Writing the report", total - 1, total);
+    const result = await apiRetry("/api/report", Object.assign({}, common, { branch: plan.branch, items }), run);
+    const entry = Object.assign({}, result, { when: Date.now() });
+    saveHistory(entry);
+    showResult(entry);
+  } catch (e) {
+    if (e instanceof Cancelled) { go("home"); }
+    else {
+      if (e.stale && cacheKey) { const c = cacheLoad(); delete c[cacheKey]; cacheSave(c); }
+      homeError(e instanceof TypeError ? "Could not reach the server. Check your connection and try again." : e.message);
+      go("home");
+    }
+  } finally {
+    $("#analyzeBtn").disabled = false;
+    state.run = null;
+  }
+}
+
+$("#cancelBtn").addEventListener("click", () => { if (state.run) state.run.cancelled = true; });
+
+/* ---------- setup ---------- */
+$("#purposes").addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  state.purpose = chip.dataset.p;
+  document.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c === chip));
+  $("#customBox").hidden = state.purpose !== "custom";
+});
+$("#focus").addEventListener("input", () => { $("#focusCount").textContent = $("#focus").value.length + "/300"; });
+$("#analyzeBtn").addEventListener("click", startAnalysis);
+$("#repoUrl").addEventListener("keydown", e => { if (e.key === "Enter") startAnalysis(); });
+$("#startBtn").addEventListener("click", () => { store.set("gitdigest.seen", true); go("home"); });
+
+async function init() {
+  try {
+    const res = await fetch("/api/config");
+    state.config = await res.json();
+  } catch (e) { /* keep defaults; the analyze call will report the problem */ }
+  const sel = $("#provider");
+  state.config.providers.forEach(p => {
+    const o = document.createElement("option");
+    o.value = p; o.textContent = p === "gemini" ? "Gemini" : "Groq";
+    sel.append(o);
+  });
+  $("#providerBox").hidden = state.config.providers.length < 2;
+  $("#codeBox").hidden = !state.config.needs_code;
+  if (state.config.needs_code) $("#code").value = store.get("gitdigest.code", "");
+  $("#limitLine").textContent = state.config.analyses_per_hour
+    ? "Each visitor can run about " + state.config.analyses_per_hour + " analyses per hour." : "";
+  if (!state.config.providers.length) homeError("No model provider is configured on this server yet.");
+  const hash = location.hash.slice(1);
+  show(hash && hash !== "progress" && hash !== "result" ? hash : (store.get("gitdigest.seen", false) ? "home" : "welcome"));
+}
+init();
+</script>
+</body>
+</html>

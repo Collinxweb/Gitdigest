@@ -16,14 +16,15 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 
 # ---------------------------------------------------------------- config
 
 MODELS = {
-    "gemini": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
-    "groq": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    "gemini": os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"),
+    "groq": os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
 }
 GAPS = {
     "gemini": float(os.environ.get("GITDIGEST_GAP", "4")),
@@ -38,6 +39,9 @@ MAX_FILES = int(os.environ.get("GITDIGEST_MAX_FILES", "25"))
 MAX_FOCUS_CHARS = 300
 MAX_REPO_KB = int(os.environ.get("MAX_REPO_KB", "150000"))
 CLONE_TIMEOUT = int(os.environ.get("CLONE_TIMEOUT", "90"))
+# Total seconds to spend retrying one model call. The web API lowers this to fit serverless limits.
+RETRY_BUDGET = float(os.environ.get("LLM_RETRY_BUDGET", "600"))
+REQUEST_TIMEOUT = float(os.environ.get("LLM_REQUEST_TIMEOUT", "120"))
 
 PURPOSES = {
     "security": (
@@ -69,6 +73,8 @@ CODE_EXTS = {"py", "js", "ts", "tsx", "jsx", "go", "rs", "java", "kt", "rb", "ph
              "hpp", "cs", "swift", "sol", "move", "md", "json", "toml", "yaml", "yml", "html", "css",
              "sh", "txt", "cfg", "ini", "sql", "vue", "svelte", "dart", "lua", "ex", "exs"}
 CITE_RE = re.compile(r"`?([\w][\w./\-]*\.(\w+)):(\d+)(?:-(\d+))?`?")
+SAFE_PATH_RE = re.compile(r"^[\w.@+\- /]{1,300}$")
+SAFE_BRANCH_RE = re.compile(r"^[\w.\-/]{1,100}$")
 GITHUB_RE = re.compile(
     r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100}?)(?:\.git)?/?$"
 )
@@ -84,6 +90,14 @@ class RepoError(Exception):
 
 class LLMError(Exception):
     """The model provider failed."""
+
+
+class RateLimited(LLMError):
+    """The provider is rate limiting us. retry_after is a suggested wait in seconds."""
+
+    def __init__(self, message, retry_after):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 # ---------------------------------------------------------------- prompts
@@ -245,11 +259,12 @@ def verify_citations(text, line_counts):
 
 # ---------------------------------------------------------------- providers
 
-def _post_with_retry(url, headers, body, parse):
+def _post_with_retry(url, headers, body, parse, model="", model_env=""):
     delay = 5
+    started = time.time()
     for _ in range(5):
         try:
-            r = requests.post(url, headers=headers, json=body, timeout=120)
+            r = requests.post(url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
         except requests.RequestException:
             raise LLMError("Could not reach the model provider.")
         if r.status_code == 429 or r.status_code >= 500:
@@ -257,15 +272,20 @@ def _post_with_retry(url, headers, body, parse):
             retry_after = r.headers.get("Retry-After", "")
             if retry_after.replace(".", "", 1).isdigit():
                 wait = min(float(retry_after), 60)
+            if time.time() - started + wait > RETRY_BUDGET:
+                raise RateLimited("The model provider is busy or rate limiting requests.", wait)
             time.sleep(wait)
             delay = min(delay * 2, 60)
             continue
         if r.status_code in (401, 403):
             raise LLMError("The model provider rejected the API key.")
+        if r.status_code == 404:
+            raise LLMError(f"The model provider doesn't recognize the model \"{model}\". "
+                           f"It may have been retired. Set {model_env} to a current model name.")
         if r.status_code >= 400:
             raise LLMError(f"The model provider returned an error ({r.status_code}).")
         return parse(r.json())
-    raise LLMError("The model provider is rate limiting requests. Try again in a few minutes.")
+    raise RateLimited("The model provider is rate limiting requests. Try again in a few minutes.", 30)
 
 
 def complete(provider, prompt, api_key):
@@ -280,6 +300,7 @@ def complete(provider, prompt, api_key):
             {"x-goog-api-key": api_key, "Content-Type": "application/json"},
             {"contents": [{"parts": [{"text": prompt}]}]},
             parse,
+            MODELS["gemini"], "GEMINI_MODEL",
         )
     if provider == "groq":
         def parse(data):
@@ -292,6 +313,7 @@ def complete(provider, prompt, api_key):
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             {"model": MODELS["groq"], "messages": [{"role": "user", "content": prompt}]},
             parse,
+            MODELS["groq"], "GROQ_MODEL",
         )
     raise InputError(f"Unknown provider: {provider}")
 
@@ -341,6 +363,14 @@ def analyze(repo, purpose, focus, provider, api_key, cache, progress=None):
         summaries.append(f"### {p}\n{summary}")
 
     note("Writing the report", len(selected), total)
+    result = finish_report(provider, api_key, instructions, summaries, line_counts, selected)
+    result.update(purpose=purpose, provider=provider)
+    note("Done", total, total)
+    return result
+
+
+def finish_report(provider, api_key, instructions, summaries, line_counts, files):
+    """Write the final report from file summaries and verify its citations."""
     report = complete(
         provider,
         REPORT_PROMPT.format(purpose=instructions, summaries="\n\n".join(summaries)),
@@ -349,28 +379,29 @@ def analyze(repo, purpose, focus, provider, api_key, cache, progress=None):
     report, ok, bad = verify_citations(report, line_counts)
     # Only real files may be turned into links by the UI.
     linkable = sorted({m.group(1) for m in CITE_RE.finditer(report) if m.group(1) in line_counts})
-    note("Done", total, total)
     return {
         "report": report.strip(),
         "linkable": linkable,
-        "files": selected,
+        "files": list(files),
         "citations_ok": ok,
         "citations_bad": bad,
-        "purpose": purpose,
-        "provider": provider,
     }
 
 
 # ---------------------------------------------------------------- github
 
-def github_repo_info(owner, name):
-    """Check the repo is public and a sensible size. Returns the API payload, or None if unavailable."""
+def _gh_headers():
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "gitdigest"}
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def github_repo_info(owner, name):
+    """Check the repo is public and a sensible size. Returns the API payload, or None if unavailable."""
     try:
-        r = requests.get(f"https://api.github.com/repos/{owner}/{name}", headers=headers, timeout=15)
+        r = requests.get(f"https://api.github.com/repos/{owner}/{name}", headers=_gh_headers(), timeout=15)
     except requests.RequestException:
         return None
     if r.status_code == 404:
@@ -383,6 +414,68 @@ def github_repo_info(owner, name):
     if data.get("size", 0) > MAX_REPO_KB:
         raise RepoError("That repository is too large for this tool.")
     return data
+
+
+def valid_repo_path(path):
+    return (isinstance(path, str) and bool(SAFE_PATH_RE.match(path))
+            and not path.startswith("/") and ".." not in path.split("/"))
+
+
+def valid_branch(branch):
+    return isinstance(branch, str) and bool(SAFE_BRANCH_RE.match(branch)) and ".." not in branch
+
+
+def github_tree(owner, name):
+    """List a public repo's files through the GitHub API and pick which to read. No clone needed."""
+    info = github_repo_info(owner, name)
+    if info is None:
+        raise RepoError("GitHub's API isn't available to this server right now. "
+                        "Try again shortly, or set GITHUB_TOKEN on the server.")
+    branch = info.get("default_branch") or "main"
+    try:
+        r = requests.get(f"https://api.github.com/repos/{owner}/{name}/git/trees/{quote(branch, safe='')}",
+                         params={"recursive": "1"}, headers=_gh_headers(), timeout=20)
+    except requests.RequestException:
+        raise RepoError("Could not read that repository's file list.")
+    if r.status_code != 200:
+        raise RepoError("Could not read that repository's file list.")
+    data = r.json()
+    sizes = {}
+    for entry in data.get("tree", []):
+        if entry.get("type") != "blob" or entry.get("mode") == "120000":  # skip dirs, submodules, symlinks
+            continue
+        path = entry.get("path", "")
+        if valid_repo_path(path):
+            sizes[path] = entry.get("size", 0)
+    paths = filter_files(list(sizes), sizes)
+    if not paths:
+        raise RepoError("No readable text files were found in this repository.")
+    return {"branch": branch, "tree_sha": data.get("sha", ""), "files": select_files(paths)}
+
+
+def fetch_raw(owner, name, branch, path):
+    """Download one text file from a public repo. Host is fixed; branch and path are validated."""
+    if not valid_branch(branch) or not valid_repo_path(path):
+        raise InputError("Invalid file reference.")
+    url = (f"https://raw.githubusercontent.com/{owner}/{name}/"
+           f"{quote(branch, safe='/')}/{quote(path, safe='/')}")
+    try:
+        r = requests.get(url, timeout=20, stream=True)
+    except requests.RequestException:
+        raise RepoError(f"Could not fetch {path} from GitHub.")
+    if r.status_code != 200:
+        raise RepoError(f"Could not fetch {path} from GitHub.")
+    chunks, size = [], 0
+    for chunk in r.iter_content(65536):
+        size += len(chunk)
+        if size > MAX_FILE_BYTES:
+            r.close()
+            raise RepoError(f"{path} is too large to read.")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
+    if b"\0" in raw:
+        raise RepoError(f"{path} is a binary file.")
+    return raw.decode("utf-8", errors="replace")
 
 
 def clone_github(owner, name, dest):
