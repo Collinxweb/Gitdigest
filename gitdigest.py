@@ -259,14 +259,16 @@ def verify_citations(text, line_counts):
 
 # ---------------------------------------------------------------- providers
 
-def _post_with_retry(url, headers, body, parse, model="", model_env=""):
+def _post_with_retry(url, headers, body, parse, model="", model_env="", label="the model provider"):
     delay = 5
     started = time.time()
     for _ in range(5):
         try:
             r = requests.post(url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
-        except requests.RequestException:
-            raise LLMError("Could not reach the model provider.")
+        except requests.Timeout:
+            raise LLMError(f"{label} took too long to respond. Try again, or switch models.")
+        except requests.RequestException as e:
+            raise LLMError(f"Could not reach {label} ({type(e).__name__}).")
         if r.status_code == 429 or r.status_code >= 500:
             wait = delay
             retry_after = r.headers.get("Retry-After", "")
@@ -300,7 +302,7 @@ def complete(provider, prompt, api_key):
             {"x-goog-api-key": api_key, "Content-Type": "application/json"},
             {"contents": [{"parts": [{"text": prompt}]}]},
             parse,
-            MODELS["gemini"], "GEMINI_MODEL",
+            MODELS["gemini"], "GEMINI_MODEL", "Gemini",
         )
     if provider == "groq":
         def parse(data):
@@ -313,7 +315,7 @@ def complete(provider, prompt, api_key):
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             {"model": MODELS["groq"], "messages": [{"role": "user", "content": prompt}]},
             parse,
-            MODELS["groq"], "GROQ_MODEL",
+            MODELS["groq"], "GROQ_MODEL", "Groq",
         )
     raise InputError(f"Unknown provider: {provider}")
 
