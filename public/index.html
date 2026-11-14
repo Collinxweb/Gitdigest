@@ -236,6 +236,12 @@ p { margin:0 0 12px; }
 
     <div class="sect"><div><h2>Quick start</h2><span class="small muted">Choose a purpose</span></div></div>
     <div class="qgrid" id="purposes"></div>
+    <span class="label">Scan depth</span>
+    <div class="seg" id="scan">
+      <button data-scan="quick">Quick &middot; 12 files</button>
+      <button data-scan="full">Full &middot; 25 files</button>
+    </div>
+    <p class="small muted" style="margin-top:-4px">Quick reads the most important files and finishes sooner. Full reads more of the repo.</p>
     <div id="customBox" hidden>
       <span class="label">What do you need? <span id="focusCount">0/300</span></span>
       <div class="field"><textarea id="focus" maxlength="300" placeholder="For example: how user funds move through this code"></textarea></div>
@@ -404,7 +410,7 @@ const ONBOARD = [
 
 const state = { config: { providers: [], needs_code: false, gaps: {}, analyses_per_hour: 0, login: {}, login_ready: false },
                  user: null, purpose: "security", current: null, run: null, slide: 0, filter: "all",
-                 editingNote: null, loginError: "", configError: "" };
+                 editingNote: null, loginError: "", configError: "", scan: "quick" };
 
 /* ---------- storage (guarded: it can be empty or blocked) ---------- */
 const store = {
@@ -412,7 +418,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
-const getSettings = () => Object.assign({ theme: "system", purpose: "security", provider: "" }, store.get("gitdigest.settings", {}));
+const getSettings = () => Object.assign({ theme: "system", purpose: "security", provider: "", scan: "quick" }, store.get("gitdigest.settings", {}));
 const saveSettings = patch => { store.set("gitdigest.settings", Object.assign(getSettings(), patch)); applyTheme(); };
 const getHistory = () => store.get("gitdigest.history", []);
 const getJournal = () => store.get("gitdigest.journal", []);
@@ -569,6 +575,9 @@ function renderPurposes() {
   ).join("");
   $("#customBox").hidden = state.purpose !== "custom";
 }
+function renderScan() {
+  document.querySelectorAll("#scan button").forEach(b => b.classList.toggle("on", b.dataset.scan === state.scan));
+}
 function renderHome() {
   const u = state.user || {};
   const first = (u.name || u.login || "").split(" ")[0];
@@ -657,8 +666,8 @@ async function startAnalysis() {
 
   const provider = $("#provider").value || state.config.providers[0];
   saveSettings({ provider });
-  const common = { url, provider, code: $("#code").value, purpose: state.purpose, focus: $("#focus").value };
-  const gap = (state.config.gaps && state.config.gaps[provider]) || 4;
+  const common = { url, provider, code: $("#code").value, purpose: state.purpose, focus: $("#focus").value,
+                   max_files: state.scan === "full" ? 25 : 12 };
   const run = { cancelled: false, done: 0, total: 1 };
   state.run = run;
   $("#analyzeBtn").disabled = true;
@@ -675,28 +684,36 @@ async function startAnalysis() {
     const bucket = (cache[cacheKey] && cache[cacheKey].items) || {};
     const total = plan.files.length + 1;
     run.total = total;
-    const items = [];
-
-    for (let i = 0; i < plan.files.length; i++) {
-      if (run.cancelled) throw new Cancelled();
-      const path = plan.files[i];
-      run.done = i;
-      setProgress("Reading " + path, i, total);
-      let item = bucket[path];
-      if (!item) {
-        try {
-          item = await apiRetry("/api/summarize", Object.assign({}, common, { branch: plan.branch, path }), run);
-        } catch (e) {
-          if (e.status === 422) continue;  // unreadable file: skip it and keep going
-          throw e;
+    // Read a few files at once. Rate limits are handled by apiRetry, so no fixed wait is needed.
+    const results = new Array(plan.files.length);
+    let next = 0, finished = 0;
+    const worker = async () => {
+      while (next < plan.files.length) {
+        if (run.cancelled) throw new Cancelled();
+        const i = next++;
+        const path = plan.files[i];
+        let item = bucket[path];
+        if (!item) {
+          try {
+            item = await apiRetry("/api/summarize", Object.assign({}, common, { branch: plan.branch, path }), run);
+          } catch (e) {
+            if (e.status !== 422) { run.cancelled = true; throw e; }  // real failure stops the run
+            item = null;  // unreadable file: skip it and keep going
+          }
+          if (item) {
+            bucket[path] = item;
+            cache[cacheKey] = { t: Date.now(), items: bucket };
+            cacheSave(cache);
+          }
         }
-        bucket[path] = item;
-        cache[cacheKey] = { t: Date.now(), items: bucket };
-        cacheSave(cache);
-        await waitFor(gap * 1000, run);
+        results[i] = item;
+        finished++;
+        run.done = finished;
+        setProgress("Read " + finished + " of " + plan.files.length + " files", finished, total);
       }
-      items.push(item);
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, plan.files.length) }, worker));
+    const items = results.filter(Boolean);
     if (!items.length) throw new Error("None of this repository's files could be read.");
 
     run.done = total - 1;
@@ -950,6 +967,11 @@ $("#purposes").addEventListener("click", e => {
   renderPurposes();
 });
 document.querySelectorAll("#quick .chip").forEach(c => c.addEventListener("click", () => { $("#repoUrl").value = c.dataset.repo; }));
+document.querySelectorAll("#scan button").forEach(b => b.addEventListener("click", () => {
+  state.scan = b.dataset.scan;
+  saveSettings({ scan: state.scan });
+  renderScan();
+}));
 $("#focus").addEventListener("input", () => { $("#focusCount").textContent = $("#focus").value.length + "/300"; });
 $("#analyzeBtn").addEventListener("click", startAnalysis);
 $("#repoUrl").addEventListener("keydown", e => { if (e.key === "Enter") startAnalysis(); });
@@ -988,6 +1010,8 @@ async function init() {
   state.user = (me && me.user) || null;
   const s = getSettings();
   state.purpose = PURPOSES[s.purpose] ? s.purpose : "security";
+  state.scan = s.scan === "full" ? "full" : "quick";
+  renderScan();
   applyTheme();
   fillProviders(s.provider);
   $("#codeBox").hidden = !state.config.needs_code;

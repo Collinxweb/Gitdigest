@@ -329,8 +329,12 @@ def plan():
     body, owner, name, _provider, _key, _user = common()
     g.purpose_instructions(str(body.get("purpose", "")), str(body.get("focus", "")))
     tree = g.github_tree(owner, name)
+    limit = body.get("max_files", g.MAX_FILES)
+    if not isinstance(limit, int) or isinstance(limit, bool):
+        limit = g.MAX_FILES
+    limit = max(3, min(limit, g.MAX_FILES))
     return jsonify(repo=f"{owner}/{name}", branch=tree["branch"],
-                   tree_sha=tree["tree_sha"], files=tree["files"])
+                   tree_sha=tree["tree_sha"], files=tree["files"][:limit])
 
 
 @route("/summarize", methods=["POST"])

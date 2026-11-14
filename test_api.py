@@ -211,6 +211,12 @@ class AnalysisTests(Base):
         other.set_cookie("gd_session", self.session(id="99", login="someone"))
         self.assertEqual(self.post("/api/plan", client=other).status_code, 200)
 
+    def test_plan_respects_the_scan_limit(self):
+        self.assertEqual(self.post("/api/plan", max_files=1).get_json()["files"], ["README.md", "app.py"])
+        self.assertEqual(len(self.post("/api/plan", max_files=3).get_json()["files"]), 2)
+        self.assertEqual(len(self.post("/api/plan", max_files="lots").get_json()["files"]), 2)
+        self.assertEqual(len(self.post("/api/plan", max_files=999).get_json()["files"]), 2)
+
     def test_routes_work_with_and_without_api_prefix(self):
         self.assertEqual(self.client.get("/config").status_code, 200)
         self.assertEqual(self.post("/plan").status_code, 200)
