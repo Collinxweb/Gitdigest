@@ -22,7 +22,7 @@ Each file summary is signed by the server. `/api/report` rejects any summary tha
 | `gitdigest.py` | Core logic and a CLI (file selection, prompts, citation check) |
 | `public/index.html` | The mobile-first page |
 | `vercel.json` | Routes `/api/*` to the function and sets its time limit |
-| `test_gitdigest.py`, `test_api.py` | 30 tests, none call a model or GitHub |
+| `test_gitdigest.py`, `test_api.py` | 42 tests, none call a model, GitHub, or Google |
 
 ## Deploy
 
@@ -40,9 +40,23 @@ If a deploy or the first run fails, read the build log and the function log in V
 
 Providers retire models. If the page says the provider "doesn't recognize the model", set `GEMINI_MODEL` or `GROQ_MODEL` in your host's environment variables to a current model name, then redeploy. As of November 2026 the defaults are `gemini-3.8-flash` and `openai/gpt-oss-120b`. Check Google AI Studio's and Groq's model pages for the current free models.
 
+## Sign-in
+
+Analysis requires sign-in with GitHub or Google. Each provider needs an OAuth app:
+
+| Provider | Callback URL |
+|---|---|
+| GitHub (OAuth App) | `https://gitdigest1.vercel.app/api/auth/github/callback` |
+| Google (OAuth client) | `https://gitdigest1.vercel.app/api/auth/google/callback` |
+
+Set `SESSION_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` in Vercel, then redeploy. A provider button only appears when its variables are set. Sessions are signed cookies that last 7 days. Nothing is stored on the server: signed-in users are identified by provider and account ID only, and summaries, history, and journal stay in the browser.
+
+If a Google login shows "Access blocked", add the account as a test user on the Google OAuth consent screen, or publish the app.
+
 ## Protect your free quota
 
-- **`ACCESS_CODE`** is the real guard. Set it.
+- **Sign-in** is the main guard: only signed-in accounts can analyze.
+- **`ACCESS_CODE`** is an optional extra code on top of sign-in.
 - **`CALLS_PER_IP`** (default 90 model calls per visitor per hour, about 3 analyses) is best-effort only. Serverless instances don't share memory, so one visitor can exceed it by landing on different instances.
 - Your provider's own free-tier limit is the final cap. When it is hit, the page waits and retries a few times, then shows an error.
 
@@ -74,5 +88,4 @@ The CLI uses `git` (clone or a local repo). `--dry-run` lists the files it would
 - Gemini reads up to 1,500 lines per file and Groq up to 300, so a citation past that point is marked unverified.
 - A verified citation means the file and line range exist. It does not prove the claim is true, so open the link before relying on it.
 - Each API call must finish inside the function time limit (60 seconds in `vercel.json`; check what your Vercel plan allows). Very slow model responses can fail.
-- No sign-in. GitHub or Google login would need an OAuth app you create.
 - Summary history and the file cache live in the visitor's own browser.
