@@ -404,7 +404,7 @@ const ONBOARD = [
 
 const state = { config: { providers: [], needs_code: false, gaps: {}, analyses_per_hour: 0, login: {}, login_ready: false },
                  user: null, purpose: "security", current: null, run: null, slide: 0, filter: "all",
-                 editingNote: null, loginError: "" };
+                 editingNote: null, loginError: "", configError: "" };
 
 /* ---------- storage (guarded: it can be empty or blocked) ---------- */
 const store = {
@@ -550,15 +550,15 @@ function finishOnboarding() {
 
 /* ---------- sign-in ---------- */
 function renderSignin() {
-  const box = $("#loginError");
-  box.textContent = state.loginError || ""; box.hidden = !state.loginError;
+  // Both buttons always show. Tapping one starts the real flow, so any failure appears there.
   const cfg = state.config;
-  $("#loginGithub").hidden = !(cfg.login && cfg.login.github);
-  $("#loginGoogle").hidden = !(cfg.login && cfg.login.google);
-  if (!cfg.login_ready) {
-    box.textContent = "Sign-in isn't set up on this server yet.";
-    box.hidden = false;
-  }
+  const lines = [];
+  if (state.loginError) lines.push(state.loginError);
+  if (state.configError) lines.push(state.configError);
+  if (!state.configError && !cfg.login_ready) lines.push("The server is missing sign-in settings (SESSION_SECRET or a provider's client ID and secret).");
+  const box = $("#loginError");
+  box.innerHTML = lines.map(esc).join("<br>");
+  box.hidden = lines.length === 0;
 }
 
 /* ---------- home ---------- */
@@ -963,12 +963,28 @@ if (window.matchMedia) {
   try { window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (getSettings().theme === "system") applyTheme(); }); } catch (e) {}
 }
 
+// Try the API path, then the bare path. Report the real status codes if both fail.
+async function loadConfig() {
+  const tried = [];
+  for (const path of ["/api/config", "/config"]) {
+    try {
+      const res = await fetch(path);
+      if (res.ok) return { cfg: await res.json(), error: "" };
+      tried.push(path + " returned " + res.status);
+    } catch (e) {
+      tried.push(path + " could not be reached");
+    }
+  }
+  return { cfg: null, error: "Couldn't load settings from the server (" + tried.join("; ") + ")." };
+}
+
 async function init() {
-  const [cfg, me] = await Promise.all([
-    fetch("/api/config").then(r => r.json()).catch(() => null),
+  const [loaded, me] = await Promise.all([
+    loadConfig(),
     fetch("/api/me").then(r => r.json()).catch(() => ({ user: null }))
   ]);
-  if (cfg) state.config = Object.assign(state.config, cfg);
+  if (loaded.cfg) state.config = Object.assign(state.config, loaded.cfg);
+  state.configError = loaded.error;
   state.user = (me && me.user) || null;
   const s = getSettings();
   state.purpose = PURPOSES[s.purpose] ? s.purpose : "security";
